@@ -29,6 +29,8 @@ No files are renamed in the process — everything keeps its original filename, 
 
 Folders with only a single `(Disc 1)` and no matching siblings are left untouched, since they aren't actually part of a multi-disc set.
 
+At the end, it can also optionally hide the raw disc files for frontend compatibility — see below.
+
 ## Requirements
 
 - macOS (uses whatever bash macOS ships by default — no Homebrew or extra install needed)
@@ -49,13 +51,13 @@ If you're not sure of the folder's path: locate the script in Finder, hold the O
 Then make the script executable:
 
 ```
-chmod +x multidisc_merge.sh
+chmod +x merge_multidisc.sh
 ```
 
 ### 2. Run it
 
 ```
-./multidisc_merge.sh "/path/to/your/roms"
+./merge_multidisc.sh "/path/to/your/roms"
 ```
 
 Replace the path with the folder you want scanned.
@@ -67,41 +69,26 @@ You'll be asked to choose a mode:
 
 When it finishes, it prints a summary of every game it merged and every singleton `(Disc 1)` folder it skipped.
 
-## Test example
+## Hiding disc files for frontends (e.g. ES-DE)
 
-The `test/` folder in this repository contains a small set of placeholder folders you can use to see the script in action before running it on your real library:
+Some frontends — ES-DE among them — list every file inside a game's folder as its own entry, rather than treating the folder as a single game. Even after merging, a game folder still contains the raw `.bin`/`.cue`/`.chd` files alongside the `.m3u`, so the frontend sees several confusing entries instead of one.
 
-```
-test/
-├── Multidisc Quest (Disc 1)/
-│   ├── Multidisc Quest (Disc 1).bin
-│   └── Multidisc Quest (Disc 1).cue
-├── Multidisc Quest (Disc 2)/
-│   ├── Multidisc Quest (Disc 2).bin
-│   └── Multidisc Quest (Disc 2).cue
-├── Singleton Quest (Disc 1)/
-│   ├── Singleton Quest (Disc 1).bin
-│   └── Singleton Quest (Disc 1).cue
-└── Singleton Quest 2 (Disc 2)/
-    ├── Singleton Quest 2 (Disc 2).bin
-    └── Singleton Quest 2 (Disc 2).cue
-```
-
-All `.bin` files are empty placeholders (0 bytes) — no real game data is included, since sharing actual disc images isn't legal. Each `.cue` file is a minimal, valid-looking sheet referencing its matching `.bin`, just enough for the script to detect and process.
-
-This set demonstrates both code paths:
-
-- **`Multidisc Quest`** has two disc folders sharing the same base title — the script will merge them into a single `Multidisc Quest/` folder and generate `Multidisc Quest.m3u`.
-- **`Singleton Quest`** and **`Singleton Quest 2`** each have only one disc folder with no matching sibling — the script will leave both untouched and list them separately in the summary as skipped singletons.
-
-To try it yourself:
+At the end of a run, the script asks:
 
 ```
-chmod +x multidisc_merge.sh
-./multidisc_merge.sh "test"
+Hide the individual disc files in a .hidden subfolder for frontend compatibility? (y/n):
 ```
 
-Pick **Dry run** mode when prompted so you can see exactly what it plans to do to `Multidisc Quest` before confirming. Afterward, `test/` will contain a merged `Multidisc Quest/` folder with its `.m3u` playlist, while both `Singleton Quest` folders remain exactly as they were.
+Answering `y` scans every top-level folder in the target directory — multi-disc games merged just now, single-disc "(Disc 1)" games left untouched, and anything left over from a previous run — and for each one that still has its disc files sitting loose, it:
+
+- moves the `.bin`/`.cue`/`.chd` files into a `.hidden` subfolder (the leading dot makes it invisible to most frontends and to Finder by default)
+- rewrites the game's `.m3u` to point at the hidden copies (`.hidden/<filename>`)
+
+The result is a folder containing only a `.m3u` file (plus the invisible `.hidden` subfolder), which frontends like ES-DE will show as a single, clean entry per game — including for single-disc games, not just multi-disc ones.
+
+A folder that already has a `.hidden` subfolder is skipped on future runs, so it's safe to answer `y` every time, even on a library that's a mix of already-hidden and not-yet-hidden games.
+
+**Note:** after this step, disc-swapping in your emulator (e.g. DuckStation) still works exactly the same, since it's the `.m3u` — not the raw files — that gets loaded, and the `.m3u` still resolves correctly via its relative path into `.hidden/`.
 
 ## Technical notes
 
@@ -110,3 +97,4 @@ macOS ships bash 3.2 by default, and associative arrays weren't introduced until
 ## License
 
 MIT
+</content>

@@ -7,6 +7,10 @@
 # a single folder containing all disc files, plus a generated .m3u
 # playlist that auto-detects each disc's .cue/.chd file.
 #
+# At the end, optionally hides the individual disc files in a .hidden
+# subfolder for frontends (e.g. ES-DE) that would otherwise list every
+# file in a game folder as its own entry.
+#
 # Compatible with bash 3.2+ (the version macOS ships by default) -
 # no minimum bash version, Homebrew, or extra install required.
 #
@@ -71,85 +75,85 @@ for entry in */; do
     fi
 done
 
-if [[ ! -s "$SCAN_FILE" ]]; then
-    echo "No folders matching the \"(Disc N)\" naming convention were found in this directory."
-    exit 0
-fi
+# --- Step 2: process each distinct game title (skipped entirely if nothing matched) ---
+if [[ -s "$SCAN_FILE" ]]; then
+    while IFS= read -r base_name <&3; do
+        disc_count=$(awk -F'|' -v name="$base_name" '$1 == name' "$SCAN_FILE" | wc -l | tr -d ' ')
 
-# --- Step 2: process each distinct game title ---
-while IFS= read -r base_name; do
-    disc_count=$(awk -F'|' -v name="$base_name" '$1 == name' "$SCAN_FILE" | wc -l | tr -d ' ')
-
-    if [[ "$disc_count" -le 1 ]]; then
-        singleton_folder=$(awk -F'|' -v name="$base_name" '$1 == name {print $3}' "$SCAN_FILE" | head -n 1)
-        SKIPPED_SINGLETONS+=("$singleton_folder")
-        continue
-    fi
-
-    echo "Found multi-disc group: \"$base_name\" ($disc_count discs)"
-    sorted_entries=$(awk -F'|' -v name="$base_name" '$1 == name {print $2":"$3}' "$SCAN_FILE" | sort -t: -k1,1n)
-
-    printf '%s\n' "$sorted_entries" | while IFS=: read -r num folder; do
-        [[ -n "$folder" ]] && echo "  Disc $num: $folder"
-    done
-
-    if $CONFIRM_MODE; then
-        read -rp "Proceed with merging \"$base_name\"? (y/n): " ans
-        if [[ ! "$ans" =~ ^[Yy]$ ]]; then
-            echo "  Skipped by user request."
-            echo ""
+        if [[ "$disc_count" -le 1 ]]; then
+            singleton_folder=$(awk -F'|' -v name="$base_name" '$1 == name {print $3}' "$SCAN_FILE" | head -n 1)
+            SKIPPED_SINGLETONS+=("$singleton_folder")
             continue
         fi
-    fi
 
-    mkdir -p "$base_name"
+        echo "Found multi-disc group: \"$base_name\" ($disc_count discs)"
+        sorted_entries=$(awk -F'|' -v name="$base_name" '$1 == name {print $2":"$3}' "$SCAN_FILE" | sort -t: -k1,1n)
 
-    m3u_lines=()
+        printf '%s\n' "$sorted_entries" | while IFS=: read -r num folder; do
+            [[ -n "$folder" ]] && echo "  Disc $num: $folder"
+        done
 
-    # Move each disc's contents into the merged folder, recording its
-    # .cue/.chd filename (detected BEFORE moving, so it works whether
-    # or not the filename itself contains "Disc N")
-    while IFS=: read -r num folder; do
-        [[ -z "$folder" ]] && continue
-
-        cue_file=$(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \) | head -n 1)
-        cue_basename=""
-        if [[ -n "$cue_file" ]]; then
-            cue_basename="$(basename "$cue_file")"
-        fi
-
-        find "$folder" -mindepth 1 -maxdepth 1 -exec mv -n {} "$base_name"/ \;
-
-        if [[ -n "$cue_basename" ]]; then
-            m3u_lines+=("$cue_basename")
-        else
-            echo "  Warning: no .cue/.chd file found for Disc $num (in \"$folder\") - it will be missing from the .m3u"
-        fi
-    done <<< "$sorted_entries"
-
-    m3u_path="${base_name}/${base_name}.m3u"
-    printf "%s\n" "${m3u_lines[@]}" > "$m3u_path"
-    echo "  Created: $m3u_path"
-
-    # Delete original disc folders only if now empty (a leftover file
-    # means a name collision happened during the move - left in place
-    # rather than risk losing data)
-    while IFS=: read -r num folder; do
-        [[ -z "$folder" ]] && continue
-        if [[ -d "$folder" ]]; then
-            if [[ -z "$(ls -A "$folder" 2>/dev/null)" ]]; then
-                rmdir "$folder"
-            else
-                echo "  Warning: \"$folder\" is not empty after merging (likely a filename collision) - left in place, not deleted."
+        if $CONFIRM_MODE; then
+            read -rp "Proceed with merging \"$base_name\"? (y/n): " ans
+            if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+                echo "  Skipped by user request."
+                echo ""
+                continue
             fi
         fi
-    done <<< "$sorted_entries"
 
-    MERGED_GAMES+=("$base_name ($disc_count discs)")
-    echo ""
-done < <(cut -d'|' -f1 "$SCAN_FILE" | sort -u)
+        mkdir -p "$base_name"
+
+        m3u_lines=()
+
+        # Move each disc's contents into the merged folder, recording its
+        # .cue/.chd filename (detected BEFORE moving, so it works whether
+        # or not the filename itself contains "Disc N")
+        while IFS=: read -r num folder; do
+            [[ -z "$folder" ]] && continue
+
+            cue_file=$(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \) | head -n 1)
+            cue_basename=""
+            if [[ -n "$cue_file" ]]; then
+                cue_basename="$(basename "$cue_file")"
+            fi
+
+            find "$folder" -mindepth 1 -maxdepth 1 -exec mv -n {} "$base_name"/ \;
+
+            if [[ -n "$cue_basename" ]]; then
+                m3u_lines+=("$cue_basename")
+            else
+                echo "  Warning: no .cue/.chd file found for Disc $num (in \"$folder\") - it will be missing from the .m3u"
+            fi
+        done <<< "$sorted_entries"
+
+        m3u_path="${base_name}/${base_name}.m3u"
+        printf "%s\n" "${m3u_lines[@]}" > "$m3u_path"
+        echo "  Created: $m3u_path"
+
+        # Delete original disc folders only if now empty (a leftover file
+        # means a name collision happened during the move - left in place
+        # rather than risk losing data)
+        while IFS=: read -r num folder; do
+            [[ -z "$folder" ]] && continue
+            if [[ -d "$folder" ]]; then
+                if [[ -z "$(ls -A "$folder" 2>/dev/null)" ]]; then
+                    rmdir "$folder"
+                else
+                    echo "  Warning: \"$folder\" is not empty after merging (likely a filename collision) - left in place, not deleted."
+                fi
+            fi
+        done <<< "$sorted_entries"
+
+        MERGED_GAMES+=("$base_name ($disc_count discs)")
+        echo ""
+    done 3< <(cut -d'|' -f1 "$SCAN_FILE" | sort -u)
+else
+    echo "No folders matching the \"(Disc N)\" naming convention were found in this directory."
+fi
 
 # --- Step 3: summary ---
+echo ""
 echo "===== Summary ====="
 echo ""
 if [[ ${#MERGED_GAMES[@]} -gt 0 ]]; then
@@ -169,4 +173,87 @@ if [[ ${#SKIPPED_SINGLETONS[@]} -gt 0 ]]; then
     done
 else
     echo "No singleton \"(Disc 1)\" folders were found."
+fi
+
+# --- Step 4: optional ES-DE / EmulationStation compatibility fixup ---
+# Frontends like ES-DE list every file in a folder as its own entry -
+# including the individual .cue/.bin/.chd files a .m3u references -
+# which turns even a single-disc game into several confusing raw-file
+# entries instead of one clean entry per game.
+echo ""
+echo "Some frontends (e.g. ES-DE) list every file in a folder as its own entry,"
+echo "which turns a game - multi-disc or even single-disc - into several confusing"
+echo "entries instead of one. This step hides the raw disc files in a .hidden"
+echo "subfolder and points each game's .m3u at them, so frontends like ES-DE see"
+echo "just one clean entry per game."
+read -rp "Hide the individual disc files in a .hidden subfolder for frontend compatibility? (y/n): " hide_ans
+
+if [[ "$hide_ans" =~ ^[Yy]$ ]]; then
+
+    hide_disc_files() {
+        # $1 = folder name, $2 = sorted (by disc number) newline-separated list of disc filenames
+        local folder="$1"
+        local sorted_names="$2"
+        local hidden_dir="${folder}/.hidden"
+        local m3u_path="${folder}/${folder}.m3u"
+
+        mkdir -p "$hidden_dir"
+        find "$folder" -mindepth 1 -maxdepth 1 -type f ! -name "*.m3u" -exec mv -n {} "$hidden_dir"/ \;
+
+        : > "$m3u_path"
+        while IFS= read -r fname; do
+            [[ -n "$fname" ]] && printf '.hidden/%s\n' "$fname" >> "$m3u_path"
+        done <<< "$sorted_names"
+
+        echo "  Hidden disc files for \"$folder\" (updated $m3u_path)"
+    }
+
+    # Scan every top-level folder - covers games merged just now, singleton
+    # "(Disc 1)" games left untouched above, and anything left over from a
+    # previous run or manual setup. A folder is skipped only if it has
+    # already been processed (has a .hidden subfolder) or has no .cue/.chd
+    # file at all (nothing to hide).
+    echo ""
+    FOUND_ANY=false
+
+    for entry in */; do
+        folder="${entry%/}"
+
+        # Skip folders already processed (have a .hidden subfolder)
+        [[ -d "${folder}/.hidden" ]] && continue
+
+        disc_file_count=$(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \) | wc -l | tr -d ' ')
+        if [[ "$disc_file_count" -ge 1 ]]; then
+            FOUND_ANY=true
+
+            # Sort disc files by the disc number in their filename
+            # (falls back to the end of the list if no number is found -
+            # irrelevant for a single file, but keeps multi-disc folders
+            # from a previous run in the right order)
+            tmp_list=$(mktemp)
+            while IFS= read -r f; do
+                fname=$(basename "$f")
+                if [[ "$fname" =~ $DISC_REGEX ]]; then
+                    n="${BASH_REMATCH[1]}"
+                else
+                    n="9999"
+                fi
+                printf '%s|%s\n' "$n" "$fname" >> "$tmp_list"
+            done < <(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \))
+            sorted_names=$(sort -t'|' -k1,1n "$tmp_list" | cut -d'|' -f2)
+            rm -f "$tmp_list"
+
+            echo "Found: \"$folder\" ($disc_file_count disc file(s))"
+            hide_disc_files "$folder" "$sorted_names"
+        fi
+    done
+
+    echo ""
+    if $FOUND_ANY; then
+        echo "Done. Re-scan your library in ES-DE (or your frontend of choice) to see one entry per game."
+    else
+        echo "No folders with disc files found to update."
+    fi
+else
+    echo "Skipped - disc files left as-is."
 fi
