@@ -25,16 +25,18 @@ Final Fantasy VII/
 └── Final Fantasy VII.m3u
 ```
 
-No files are renamed in the process — everything keeps its original filename, just moved into the new shared folder. The original per-disc folders are deleted once they're empty.
+No disc files are renamed in the process — everything keeps its original filename, just moved into the new shared folder. The original per-disc folders are deleted once they're empty.
+
+Anything after `(Disc N)` in a folder name is treated as disc-specific and dropped when grouping and naming — this handles ROM sets where each disc folder carries its own extra descriptor, e.g. `Command & Conquer - Red Alert (USA) (Disc 1) (Allies)` and `(Disc 2) (Soviet)`, or `Rival Schools - United by Fate (USA) (Disc 1)` and `(Disc 2) (Evolution Disc)`. Both pairs above are still recognized as the same game and merge into `Command & Conquer - Red Alert (USA)/` and `Rival Schools - United by Fate (USA)/` respectively.
 
 Folders with only a single `(Disc 1)` and no matching siblings are left untouched, since they aren't actually part of a multi-disc set.
 
-At the end, it can also optionally hide the raw disc files for frontend compatibility — see below.
+The layout above is the intermediate result of the merge step. At the end, the script can also optionally hide the raw disc files for frontend compatibility, which changes this layout further — see below.
 
 ## Requirements
 
 - macOS (uses whatever bash macOS ships by default — no Homebrew or extra install needed)
-- Folder names must follow this exact convention: `<Game Title> (Disc 1)`, `(Disc 2)`, etc. — parentheses, capital "D", and a number.
+- Folder names must follow this exact convention: `<Game Title> (Disc 1)`, `(Disc 2)`, etc. — parentheses, capital "D", and a number. Anything after the disc number (like a region/side/bonus-disc descriptor) is fine and gets handled as described above.
 
 ## Before you run it on your real library
 
@@ -71,24 +73,40 @@ When it finishes, it prints a summary of every game it merged and every singleto
 
 ## Hiding disc files for frontends (e.g. ES-DE)
 
-Some frontends — ES-DE among them — list every file inside a game's folder as its own entry, rather than treating the folder as a single game. Even after merging, a game folder still contains the raw `.bin`/`.cue`/`.chd` files alongside the `.m3u`, so the frontend sees several confusing entries instead of one.
+Frontends like ES-DE always show a folder as a folder you have to navigate into — they don't collapse a folder down to a single entry just because it only contains one game. So even after merging, a per-game folder (holding the `.bin`/`.cue`/`.chd` files and the `.m3u`) still shows up as an extra click before the actual game appears, and worse, ES-DE also lists each loose file inside it as its own entry.
+
+The fix is to not have a per-game folder at all: the `.m3u` needs to sit directly in the directory ES-DE scans, with the raw disc files tucked into a dot-prefixed hidden folder right alongside it (dot-prefixed names are invisible to most frontends, and to Finder by default).
 
 At the end of a run, the script asks:
 
 ```
-Hide the individual disc files in a .hidden subfolder for frontend compatibility? (y/n):
+Hide the individual disc files for frontend compatibility (as described above)? (y/n):
 ```
 
-Answering `y` scans every top-level folder in the target directory — multi-disc games merged just now, single-disc "(Disc 1)" games left untouched, and anything left over from a previous run — and for each one that still has its disc files sitting loose, it:
+Answering `y` scans every top-level folder in the target directory and handles two cases:
 
-- moves the `.bin`/`.cue`/`.chd` files into a `.hidden` subfolder (the leading dot makes it invisible to most frontends and to Finder by default)
-- rewrites the game's `.m3u` to point at the hidden copies (`.hidden/<filename>`)
+- **Loose disc files** — multi-disc games merged just now, single-disc "(Disc 1)" games left untouched, or anything else left over with its `.bin`/`.cue`/`.chd` files sitting directly inside a folder. For each of these, the script:
+  - moves the disc files into a hidden folder named after the game (e.g. `.Multidisc Quest`)
+  - writes (or rewrites) the game's `.m3u` directly in the scanned directory, pointing at the hidden copies (e.g. `.Multidisc Quest/Multidisc Quest (Disc 1).cue`)
+  - removes the now-empty visible per-game folder entirely
+- **Already hidden by an older version of this script** — an earlier version of this tool nested the hidden folder *inside* the game folder (`Game/.hidden/...` with `Game/Game.m3u` next to it), which still left `Game/` itself as a visible folder for frontends to navigate into. If the script finds one of these, it migrates it to the current layout automatically: the disc files move out to the new top-level hidden folder, the `.m3u` is rewritten and moved to the top level, and the old nested folder plus the now-empty game folder are both removed.
 
-The result is a folder containing only a `.m3u` file (plus the invisible `.hidden` subfolder), which frontends like ES-DE will show as a single, clean entry per game — including for single-disc games, not just multi-disc ones.
+So a merged game like `Multidisc Quest` ends up as:
 
-A folder that already has a `.hidden` subfolder is skipped on future runs, so it's safe to answer `y` every time, even on a library that's a mix of already-hidden and not-yet-hidden games.
+```
+Multidisc Quest.m3u
+.Multidisc Quest/
+├── Multidisc Quest (Disc 1).bin
+├── Multidisc Quest (Disc 1).cue
+├── Multidisc Quest (Disc 2).bin
+└── Multidisc Quest (Disc 2).cue
+```
 
-**Note:** after this step, disc-swapping in your emulator (e.g. DuckStation) still works exactly the same, since it's the `.m3u` — not the raw files — that gets loaded, and the `.m3u` still resolves correctly via its relative path into `.hidden/`.
+with `Multidisc Quest.m3u` sitting right next to your other games — exactly one entry, no folder to click through — and the same applies to a single-disc "(Disc 1)" game, and to a game migrated from the older nested-hidden layout.
+
+Once a game has been hidden this way there's no visible top-level folder left for it, so re-running the script and answering `y` again is safe — already fully-hidden games are simply skipped, since only un-hidden or old-layout folders still have something for the script to find.
+
+**Note:** disc-swapping in your emulator (e.g. DuckStation) still works exactly the same, since it's the `.m3u` — not the raw files — that gets loaded, and the `.m3u`'s relative paths still resolve correctly into the hidden folder next to it.
 
 ## Technical notes
 

@@ -7,9 +7,10 @@
 # a single folder containing all disc files, plus a generated .m3u
 # playlist that auto-detects each disc's .cue/.chd file.
 #
-# At the end, optionally hides the individual disc files in a .hidden
-# subfolder for frontends (e.g. ES-DE) that would otherwise list every
-# file in a game folder as its own entry.
+# At the end, optionally hides each game's disc files: the .m3u ends up
+# directly in the scanned directory and the raw disc files move into a
+# dot-prefixed hidden folder next to it, so frontends (e.g. ES-DE) show
+# exactly one entry per game instead of a folder to navigate into.
 #
 # Compatible with bash 3.2+ (the version macOS ships by default) -
 # no minimum bash version, Homebrew, or extra install required.
@@ -67,8 +68,14 @@ for entry in */; do
     dir="${entry%/}"
     if [[ "$dir" =~ $DISC_REGEX ]]; then
         disc_num="${BASH_REMATCH[1]}"
+        # Everything from "(Disc N)" onward is disc-specific and gets dropped
+        # for grouping purposes - some ROM sets add a differing descriptor
+        # after the disc marker per disc (e.g. "(Disc 1) (Allies)" /
+        # "(Disc 2) (Soviet)", or "(Disc 2) (Evolution Disc)"), which would
+        # otherwise produce a different "base name" per disc and prevent
+        # them from being grouped as the same game.
         base_name=$(echo "$dir" \
-            | sed -E 's/ ?\(Disc [0-9]+\) ?/ /' \
+            | sed -E 's/ ?\(Disc [0-9]+\).*$//' \
             | sed -E 's/ +/ /g' \
             | sed -E 's/^ //; s/ $//')
         printf '%s|%s|%s\n' "$base_name" "$disc_num" "$dir" >> "$SCAN_FILE"
@@ -176,75 +183,122 @@ else
 fi
 
 # --- Step 4: optional ES-DE / EmulationStation compatibility fixup ---
-# Frontends like ES-DE list every file in a folder as its own entry -
-# including the individual .cue/.bin/.chd files a .m3u references -
-# which turns even a single-disc game into several confusing raw-file
-# entries instead of one clean entry per game.
+# Frontends like ES-DE always show a folder as a folder to navigate into -
+# they don't collapse a folder containing a single game down to one entry.
+# So a per-game folder (even one containing only a .m3u plus a hidden
+# subfolder) still shows up as an extra folder to click through. The fix
+# is to not have a per-game folder at all: the .m3u goes directly in the
+# scanned directory (right where ES-DE expects to find a game), and the
+# raw disc files move into a dot-prefixed hidden folder alongside it,
+# which ES-DE's scanner skips entirely.
 echo ""
-echo "Some frontends (e.g. ES-DE) list every file in a folder as its own entry,"
-echo "which turns a game - multi-disc or even single-disc - into several confusing"
-echo "entries instead of one. This step hides the raw disc files in a .hidden"
-echo "subfolder and points each game's .m3u at them, so frontends like ES-DE see"
-echo "just one clean entry per game."
-read -rp "Hide the individual disc files in a .hidden subfolder for frontend compatibility? (y/n): " hide_ans
+echo "Some frontends (e.g. ES-DE) always show a folder as a folder to navigate"
+echo "into, even one that only contains a single game - so a separate folder"
+echo "per game still means an extra click before the game itself appears."
+echo "This step removes that folder: it places each game's .m3u directly in"
+echo "this directory, and moves its raw disc files into a hidden folder"
+echo "(name starts with a dot) right alongside it, which frontends skip over."
+read -rp "Hide the individual disc files for frontend compatibility (as described above)? (y/n): " hide_ans
 
 if [[ "$hide_ans" =~ ^[Yy]$ ]]; then
 
     hide_disc_files() {
-        # $1 = folder name, $2 = sorted (by disc number) newline-separated list of disc filenames
+        # $1 = folder name (currently visible, top-level)
+        # $2 = directory the disc files currently live in - either "$1"
+        #      itself (a freshly merged/singleton game with loose disc
+        #      files), or "$1/.hidden" (a game already hidden by an OLDER
+        #      version of this script, which nested a ".hidden" subfolder
+        #      INSIDE the game folder and left the game folder itself
+        #      visible - still a folder for frontends to navigate into,
+        #      so it needs migrating to the current scheme too)
+        #
+        # Ends with:
+        #   <folder>.m3u        (top-level, next to this folder - what ES-DE sees)
+        #   .<folder>/          (hidden, holds the actual disc files)
+        # and the original visible "<folder>" directory (and any old nested
+        # ".hidden" inside it) removed.
         local folder="$1"
-        local sorted_names="$2"
-        local hidden_dir="${folder}/.hidden"
-        local m3u_path="${folder}/${folder}.m3u"
+        local source_dir="$2"
+        local hidden_dir=".${folder}"
+        local m3u_path="${folder}.m3u"
+        local tmp_list fname n sorted_names
+
+        # Drop any .m3u already sitting directly inside the folder (from the
+        # merge step, or from an older version of this script) - the
+        # definitive one is about to be (re)created at the top level instead.
+        find "$folder" -maxdepth 1 -type f -name "*.m3u" -delete
+
+        # Sort disc files by the disc number in their filename (falls back
+        # to the end of the list if no number is found)
+        tmp_list=$(mktemp)
+        while IFS= read -r f; do
+            fname=$(basename "$f")
+            if [[ "$fname" =~ $DISC_REGEX ]]; then
+                n="${BASH_REMATCH[1]}"
+            else
+                n="9999"
+            fi
+            printf '%s|%s\n' "$n" "$fname" >> "$tmp_list"
+        done < <(find "$source_dir" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \))
+        sorted_names=$(sort -t'|' -k1,1n "$tmp_list" | cut -d'|' -f2)
+        rm -f "$tmp_list"
 
         mkdir -p "$hidden_dir"
-        find "$folder" -mindepth 1 -maxdepth 1 -type f ! -name "*.m3u" -exec mv -n {} "$hidden_dir"/ \;
+        find "$source_dir" -mindepth 1 -maxdepth 1 -type f -exec mv -n {} "$hidden_dir"/ \;
 
         : > "$m3u_path"
         while IFS= read -r fname; do
-            [[ -n "$fname" ]] && printf '.hidden/%s\n' "$fname" >> "$m3u_path"
+            [[ -n "$fname" ]] && printf '%s/%s\n' "$hidden_dir" "$fname" >> "$m3u_path"
         done <<< "$sorted_names"
 
-        echo "  Hidden disc files for \"$folder\" (updated $m3u_path)"
+        # If the disc files came from an old nested ".hidden" dir, remove it
+        # now that it's empty
+        if [[ "$source_dir" != "$folder" && -d "$source_dir" && -z "$(ls -A "$source_dir" 2>/dev/null)" ]]; then
+            rmdir "$source_dir"
+        fi
+
+        if [[ -z "$(ls -A "$folder" 2>/dev/null)" ]]; then
+            rmdir "$folder"
+        else
+            echo "  Warning: \"$folder\" is not empty after hiding - left in place alongside $m3u_path."
+        fi
+
+        echo "  Hidden disc files for \"$folder\" -> ${hidden_dir}/ (created $m3u_path)"
     }
 
     # Scan every top-level folder - covers games merged just now, singleton
-    # "(Disc 1)" games left untouched above, and anything left over from a
-    # previous run or manual setup. A folder is skipped only if it has
-    # already been processed (has a .hidden subfolder) or has no .cue/.chd
-    # file at all (nothing to hide).
+    # "(Disc 1)" games left untouched above, folders left over from a
+    # previous run or manual setup with loose disc files, AND folders
+    # already hidden by an older version of this script (nested
+    # "<folder>/.hidden", still visible as a folder) that need migrating.
+    # Once a folder is fully processed it becomes a dot-prefixed hidden
+    # folder, so plain "*/" globbing naturally skips it on any later run -
+    # no extra bookkeeping needed.
     echo ""
     FOUND_ANY=false
 
     for entry in */; do
         folder="${entry%/}"
 
-        # Skip folders already processed (have a .hidden subfolder)
-        [[ -d "${folder}/.hidden" ]] && continue
-
+        # Case A: loose disc files sitting directly inside the folder.
         disc_file_count=$(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \) | wc -l | tr -d ' ')
         if [[ "$disc_file_count" -ge 1 ]]; then
             FOUND_ANY=true
-
-            # Sort disc files by the disc number in their filename
-            # (falls back to the end of the list if no number is found -
-            # irrelevant for a single file, but keeps multi-disc folders
-            # from a previous run in the right order)
-            tmp_list=$(mktemp)
-            while IFS= read -r f; do
-                fname=$(basename "$f")
-                if [[ "$fname" =~ $DISC_REGEX ]]; then
-                    n="${BASH_REMATCH[1]}"
-                else
-                    n="9999"
-                fi
-                printf '%s|%s\n' "$n" "$fname" >> "$tmp_list"
-            done < <(find "$folder" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \))
-            sorted_names=$(sort -t'|' -k1,1n "$tmp_list" | cut -d'|' -f2)
-            rm -f "$tmp_list"
-
             echo "Found: \"$folder\" ($disc_file_count disc file(s))"
-            hide_disc_files "$folder" "$sorted_names"
+            hide_disc_files "$folder" "$folder"
+            continue
+        fi
+
+        # Case B: already hidden by an older version of this script (a
+        # nested "<folder>/.hidden" subfolder, with "<folder>" itself still
+        # visible) - migrate it to the current top-level scheme.
+        if [[ -d "${folder}/.hidden" ]]; then
+            old_disc_count=$(find "${folder}/.hidden" -maxdepth 1 -type f \( -iname "*.cue" -o -iname "*.chd" \) | wc -l | tr -d ' ')
+            if [[ "$old_disc_count" -ge 1 ]]; then
+                FOUND_ANY=true
+                echo "Migrating already-hidden folder from an older run: \"$folder\" ($old_disc_count disc file(s))"
+                hide_disc_files "$folder" "${folder}/.hidden"
+            fi
         fi
     done
 
