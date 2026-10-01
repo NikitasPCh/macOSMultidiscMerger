@@ -116,7 +116,7 @@ What works instead:
 
 - **Use SwanStation (the RetroArch core) instead of DuckStation standalone** for PS1 games in ES-DE on Android. It handles this exact folder layout correctly, including BIOS and RetroAchievements — this is the recommended setup if you're on Android/ES-DE.
 - DuckStation standalone still works fine if launched **directly** (not through ES-DE), since its own file browser can resolve the hidden folder using its own storage access.
-- If you specifically need DuckStation-via-ES-DE to work, the disc files would need to live as individually hidden (dot-prefixed) *files* directly alongside the `.m3u`, with no wrapping folder at all, rather than this script's dot-prefixed-subfolder scheme. This script does not currently support generating that layout.
+- If you specifically need DuckStation-via-ES-DE to work, the disc files would need to live as individually hidden (dot-prefixed) *files* directly alongside the `.m3u`, with no wrapping folder at all, rather than this script's dot-prefixed-subfolder scheme. This script does not currently support generating that layout but it's something that I might work on if there is demand for it.
 
 ## Technical notes
 
