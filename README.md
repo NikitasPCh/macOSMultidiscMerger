@@ -106,7 +106,17 @@ with `Multidisc Quest.m3u` sitting right next to your other games — exactly on
 
 Once a game has been hidden this way there's no visible top-level folder left for it, so re-running the script and answering `y` again is safe — already fully-hidden games are simply skipped, since only un-hidden or old-layout folders still have something for the script to find.
 
-**Note:** disc-swapping in your emulator (e.g. DuckStation) still works exactly the same, since it's the `.m3u` — not the raw files — that gets loaded, and the `.m3u`'s relative paths still resolve correctly into the hidden folder next to it.
+**Note:** disc-swapping in a desktop emulator (e.g. DuckStation on macOS/Windows/Linux) still works exactly the same, since it's the `.m3u` — not the raw files — that gets loaded, and the `.m3u`'s relative paths still resolve correctly into the hidden folder next to it.
+
+### Known issue: DuckStation standalone on Android
+
+**This hidden-folder layout does not work with DuckStation's standalone Android app**, including when launched through ES-DE on Android (e.g. on a Retroid Pocket). DuckStation on Android can only resolve a `.m3u`'s entries when the disc files sit in the *same* folder as the `.m3u` itself — once they're tucked into a sibling hidden folder (which is exactly what this script does), it fails with an error like `Failed to open CD image`. This is a limitation of DuckStation's Android build itself, not something this script can work around from macOS.
+
+What works instead:
+
+- **Use SwanStation (the RetroArch core) instead of DuckStation standalone** for PS1 games in ES-DE on Android. It handles this exact folder layout correctly, including BIOS and RetroAchievements — this is the recommended setup if you're on Android/ES-DE.
+- DuckStation standalone still works fine if launched **directly** (not through ES-DE), since its own file browser can resolve the hidden folder using its own storage access.
+- If you specifically need DuckStation-via-ES-DE to work, the disc files would need to live as individually hidden (dot-prefixed) *files* directly alongside the `.m3u`, with no wrapping folder at all, rather than this script's dot-prefixed-subfolder scheme. This script does not currently support generating that layout.
 
 ## Technical notes
 
